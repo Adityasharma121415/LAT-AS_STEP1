@@ -1,7 +1,6 @@
 package com.cars24.taskMgmtModule.service.impl;
 
 import com.cars24.taskMgmtModule.data.response.ActivityLogResponse;
-import com.cars24.taskMgmtModule.repository.ActivityLogRepository;
 import com.cars24.taskMgmtModule.service.ActivityLogService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -12,9 +11,7 @@ import org.springframework.data.mongodb.core.aggregation.AggregationResults;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Service
 @Slf4j
@@ -22,6 +19,10 @@ import java.util.Map;
 public class ActivityLogServiceImpl implements ActivityLogService {
 
     private final MongoTemplate mongoTemplate;
+
+    private static final List<String> FUNNEL_ORDER = Arrays.asList(
+            "SOURCING", "CREDIT", "CONVERSION", "FULFILMENT", "RTO", "RISK", "DISBURSAL"
+    );
 
     @Override
     public List<ActivityLogResponse> getActivityLog(String applicationId) {
@@ -48,9 +49,24 @@ public class ActivityLogServiceImpl implements ActivityLogService {
         for (Document doc : results.getMappedResults()) {
             ActivityLogResponse logResponse = new ActivityLogResponse();
             logResponse.setFunnel(doc.getString("funnel"));
-            logResponse.setTasks((List<Map<String, Object>>) doc.get("tasks"));
+
+            List<Map<String, Object>> tasks = (List<Map<String, Object>>) doc.get("tasks");
+            tasks.sort(Comparator.comparingInt(task -> (int) task.get("order")));
+
+            logResponse.setTasks(tasks);
             activityLogs.add(logResponse);
         }
+
+        activityLogs.sort(Comparator.comparingInt(log -> {
+            String funnel = log.getFunnel();
+
+            if (funnel == null) {
+                return Integer.MAX_VALUE;
+            }
+
+            int index = FUNNEL_ORDER.indexOf(funnel.toUpperCase());
+            return index == -1 ? Integer.MAX_VALUE : index;
+        }));
 
         return activityLogs;
     }
