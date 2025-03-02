@@ -20,32 +20,30 @@ public class ActivityLogServiceImpl implements ActivityLogService {
 
     private final MongoTemplate mongoTemplate;
 
-    private static final List<String> FUNNEL_ORDER = Arrays.asList(
-            "SOURCING", "CREDIT", "CONVERSION", "FULFILMENT", "RTO", "RISK", "DISBURSAL"
-    );
-
     @Override
     public List<ActivityLogResponse> getActivityLog(String applicationId) {
         log.info("Fetching activity log for applicationId: {}", applicationId);
 
         Aggregation aggregation = Aggregation.newAggregation(
-            Aggregation.match(Criteria.where("applicationId").is(applicationId)),
-            Aggregation.group("funnel")
-                .push(new Document("taskId", "$taskId")
-                        .append("status", "$status")
-                        .append("order", "$order")
-                        .append("actorId", "$actorId")
-                        .append("updatedAt", "$updatedAt")
-                )
-                .as("tasks"),
-            Aggregation.project("tasks")
-                .and("_id").as("funnel")
-                .andExclude("_id")
+                Aggregation.match(Criteria.where("applicationId").is(applicationId)),
+                Aggregation.group("funnel")
+                        .push(new Document("taskId", "$taskId")
+                                .append("status", "$status")
+                                .append("order", "$order")
+                                .append("actorId", "$actorId")
+                                .append("updatedAt", "$updatedAt")
+                        )
+                        .as("tasks"),
+                Aggregation.project("tasks")
+                        .and("_id").as("funnel")
+                        .andExclude("_id")
         );
 
         AggregationResults<Document> results = mongoTemplate.aggregate(aggregation, "task_execution", Document.class);
 
         List<ActivityLogResponse> activityLogs = new ArrayList<>();
+        Map<String, Integer> funnelMinOrderMap = new HashMap<>();
+
         for (Document doc : results.getMappedResults()) {
             ActivityLogResponse logResponse = new ActivityLogResponse();
             logResponse.setFunnel(doc.getString("funnel"));
@@ -55,19 +53,19 @@ public class ActivityLogServiceImpl implements ActivityLogService {
 
             logResponse.setTasks(tasks);
             activityLogs.add(logResponse);
+
+            // Determine the minimum order number for this funnel
+            if (!tasks.isEmpty()) {
+                funnelMinOrderMap.put(doc.getString("funnel"), (int) tasks.get(0).get("order"));
+            } else {
+                funnelMinOrderMap.put(doc.getString("funnel"), Integer.MAX_VALUE);
+            }
         }
 
-        activityLogs.sort(Comparator.comparingInt(log -> {
-            String funnel = log.getFunnel();
-
-            if (funnel == null) {
-                return Integer.MAX_VALUE;
-            }
-
-            int index = FUNNEL_ORDER.indexOf(funnel.toUpperCase());
-            return index == -1 ? Integer.MAX_VALUE : index;
-        }));
+        // Sort activityLogs based on the minimum task order in each funnel
+        activityLogs.sort(Comparator.comparingInt(log -> funnelMinOrderMap.getOrDefault(log.getFunnel(), Integer.MAX_VALUE)));
 
         return activityLogs;
     }
 }
+
